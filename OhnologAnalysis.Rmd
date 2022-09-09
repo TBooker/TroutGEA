@@ -1,0 +1,622 @@
+---
+title: "Rainbow Trout Ohnolog Analysis"
+output: html_document
+---
+
+## Rainbow trout Ohnolog analysis
+
+Due to the whole-genome duplication event 88 MYA, rainbow trout (and many other Salmonids) have portions of their genomes that are inherited tetrasomically. Up to 10-15% of the salmonid genomes are inherited tetrasomically. 
+
+Indeed, here's Figure 1 from Campbell et al (2019 - G3) that shows the rainbow trout genome as a Circos plot and highlights the regions that are inherited tetrasomically:
+
+![](Report/img/Cambpell_etAl_Figure.gif)
+
+The green boxes on certain chromosome arms indicate regions that are inherited tetrasomically. The red line graph (the outer track on the Circos plot) indicates sequence similarity between a particular chromosome arm and the Ohnologous portion of the genome. For example, Chromosome 26 is Ohnologous to the q arm of chromosome 6.
+
+The above figure shows how the entire rainbow trout genome is an Ohnolog - the result of whole-genome duplication. Because of that, there is a concern that mapping short reads may not go particularly well in some parts of the genome - particularly those where the ohnolog pairs exhibit high sequence identity.  
+
+_________________________
+# Methods
+## Mapping Atha-Buffalo-Prairie
+
+I mapped all individuals from Athabasca-Buffalo-Prairie to the refernece genome following Jared’s pipeline. Each individual was sequenced to fairly low depth (~5x or so), so I merged the alignments (BAM files) for all 7 individuals into a single set of read alignments to get a sense for patterns of read mapping.
+## Simulating short reads
+
+The entire study is predicated on the assumption that the reference genome is a good representation of the species’ genome. That’s a standard and reasonable assumption given the quality of the reference genome we’re using. Under this assumption, we are only interested in regions of the genome that correspond to the assembled portion of the genome. So if simulate data that looks like our empirical data and map it to the reference genome, we can get a sense for how the mapping behaves. Of course, when we map the empirical trout reads, we won’t know the actual genomic region that a sequence comes from. With the simulated data I can identify reads that are not aligning to the proper regions.
+
+I simulated 250 Million paired-end reads and mapped them to the reference genome using Jared’s pipeline. A typical individual in this study was sequenced with about 10 Million reads, so this simulated dataset represents a substantial increase in coverage. That’s useful because it gives us a cleaner picture of the mapping process than we get from the empirical data which is noisier.
+
+I used the wgsim tool to simulate short reads. There are more sophisticated tools out there, but it does the job well.
+## Analysis
+
+Jared constructed a table that have quite precise estimates of the locations of Ohnologs in the Rainbow Trout genome. So, for any given genomic coordinate, I have the approximate location of the corresponding Ohnolog.
+
+For both the simulated and empirical alignments I investigated properties of reads. For each of the genomic regions in Jared’s analysis (genes or intergenic regions), I examined the reads that mapped. For each read I asked: * Is the read mapped to correct location (I could only do this for the simulated data) * Did the read have secondary alignments to other parts of the genome? And if so, how many and did the secondary mappings map to the predicted Ohnolog?
+
+For each genomic region, I recorded the following quantities:
+
+    CHROM - The chromosome that a genomic window is on
+    START - The start of the genomic window
+    END - The end of an analysis window
+    REGION - The name of the analysis window
+    total_mappings - The total number of reads that aligned to this region
+    primary_alignment_wrong - The number of reads that are incorrectly aligned
+    unique_mapping - The number of reads that mapped uniquely
+    single_maps - The number of reads with a single alternate alignment
+    double_maps - The number of reads that had two alternate alignments
+    multi_maps - The number of reads that had more than two alternate alignments
+    single_ohno_maps - The number of reads that had a single alternate alignment on the predicted ohnolog
+    double_ohno_maps - The number of reads that had two alternate alignment at least one of which was on the predicted ohnolog
+    multi_ohno_maps - The number of reads that had two alternate alignment at least one of which was on the predicted ohnolog
+    tetrasome - This chromosome is tetrasomically inherited, at least in part
+    single_ohno_maps_removed - The number of single_ohno_maps that were removed by filtering
+    ohno_maps_removed - The number of *_ohno_maps that were removed by filtering
+
+
+
+__________________________
+
+
+## Read in the data
+
+Here I just lay the groundwork for the analysis - I'll read in data and necessary packages. 
+
+```{r cars}
+library(ggplot2)
+
+## All simulated reads that have been mapped to the genome - before filtering
+trout <- read.csv("~/work/Trout/analysisOfSimulatedReads/OmykA_1.1-5inds.s.OhnologSummary.csv")
+
+## I call the data after applying Jared's filters - Jared's data
+jared <- read.csv("~/work/Trout/analysisOfSimulatedReads/OmykA_1.1-5inds.s.JaredClean.OhnologSummary.csv")
+
+# A list of the tetrasomic chromosomes 
+tetrasomic_chroms <- c("OmyA_01","OmyA_02","OmyA_03","OmyA_06","OmyA_07","OmyA_10","OmyA_12","OmyA_13","OmyA_15","OmyA_17","OmyA_18","OmyA_19","OmyA_21","OmyA_23","OmyA_26")
+
+## Make a dummy variable for each dataframe that labels the tetrasomic chroms
+jared$tetrasome <- jared$CHROM%in%tetrasomic_chroms
+trout$tetrasome <- trout$CHROM%in%tetrasomic_chroms
+
+## Read in the locations of tetrasomic chunks
+
+tetrasome_chunks <- read.csv("~/work/Trout/ohnologPositions/ArleeOhnologPositions_tetrasomes.csv")
+names( tetrasome_chunks ) <- c("CHROM", "Start", "End")
+
+```
+
+
+
+```{r calculateInterestingQuantities}
+# Calculate the proportion of data removed by applying Jared's filters...
+jared$data_removed <- 1- jared$total_mappings/trout$total_mappings
+
+# The calculation is: 1 - (Number of reads mapping - after filtering)/(Total number of reads mapping before filtering)
+
+
+trout$single_ohno_maps_removed <- trout$single_ohno_maps - jared$single_ohno_maps 
+
+trout$ohno_maps_removed <- (trout$single_ohno_maps + trout$double_ohno_maps + trout$multi_ohno_maps) - (jared$single_ohno_maps + jared$double_ohno_maps + jared$multi_ohno_maps) 
+
+```
+
+
+
+For each gene or genomic region that Jared is analysing across the rainbow trout genome, I've calculated summary statistics from the read mapping. Here's a peek at the information I collected (described above):
+
+```{r}
+
+str(trout)
+
+
+```
+
+
+
+### The proportion of data removed by filtering
+
+Here I'll plot the total amount of data that is 
+
+```{r plotProportionRemoved, fig.height = 10, fig.width=14}
+
+##############################
+
+covPlot <- ggplot()+
+  geom_rect(data = tetrasome_chunks,
+            aes(xmin = Start/1e6, xmax = End/1e6),
+            ymax =30, 
+            ymin = 0, 
+            fill = "black", 
+            col = "black",
+            alpha = 0.15)+
+  geom_point(data = jared,
+       aes(x = START/1e6,
+           y = (total_mappings*70)/(END-START),
+           fill = tetrasome),
+          alpha = 0.5, 
+          pch = 21, 
+          size= 1.2)+
+  ylab("Coverage")+
+  xlab("Position in genome (Mbp)")+
+  scale_y_continuous(limits = c(0,30))+
+   geom_smooth(data = jared, aes(x = START/1e6,
+            y = (total_mappings*70)/(END-START),
+            col = "Filtered"),
+            span = 0.4, 
+            method = "loess",
+            se = FALSE)+
+   geom_smooth(data = trout, 
+               aes(x = START/1e6,
+                   y = (total_mappings*70)/(END-START),
+                   col = "Unfiltered"),  
+               span = 0.4,
+               method = "loess")+
+  facet_wrap(~CHROM,
+             scales = "free_x")+
+  scale_fill_manual("Predicted tetrasomic",
+                     values = c("black","#D55E00"))+
+  scale_color_manual("Source",
+                    values = c( "#56B4E9","#009E73"))+
+#  scale_y_continuous(limits = c(0,1))+
+  theme_bw()
+
+
+```
+
+
+Now let’s take a look at the number of incorrect mappings for each chromosome:
+
+```{r , fig.height = 10, fig.width=14}
+
+ggplot()+
+    geom_rect(data = tetrasome_chunks,
+            aes(xmin = Start/1e6, xmax = End/1e6),
+            ymax =30, 
+            ymin = 0, 
+            fill = "black", 
+            col = "black",
+            alpha = 0.15)+
+
+  geom_point(data = trout,
+       aes(x = START/1e6,
+           y = (primary_alignment_wrong)/(total_mappings),
+           fill  = tetrasome), 
+             alpha = 0.5, pch = 21, size= 1.2)+
+  ylab("Proportion of mappings that are incorrect")+
+  xlab("Position in genome (Mbp)")+
+  ggtitle("Unfiltered reads")+
+#  scale_y_continuous(limits = c(0,30))+
+ # geom_smooth(aes(col = "Unfiltered"),  span = 0.1, method = "loess")+
+  facet_wrap(~CHROM,
+             scales = "free_x")+
+  scale_fill_manual("Predicted tetrasomic",
+                     values = c("black","#D55E00"))+
+#  scale_color_manual("Source",
+#                    values = c( "#56B4E9","#009E73"))+
+#  scale_y_continuous(limits = c(0,1))+
+  theme_bw()
+```
+
+What's the effect of Jared's filtering on this plot?
+
+
+
+```{r, fig.height = 10, fig.width=14}
+
+
+ggplot()+
+  geom_rect(data = tetrasome_chunks,
+            aes(xmin = Start/1e6, xmax = End/1e6),
+            ymax =30, 
+            ymin = 0, 
+            fill = "black", 
+            col = "black",
+            alpha = 0.15)+
+
+    geom_point(data = jared,
+       aes(x = START/1e6,
+           y = (primary_alignment_wrong)/(total_mappings), 
+           fill  = tetrasome), 
+             alpha = 0.5, pch = 21, size= 1.2)+
+  ylab("Proportion of mappings that are incorrect")+
+  xlab("Position in genome (Mbp)")+
+  ggtitle("Filtered reads")+
+#  scale_y_continuous(limits = c(0,30))+
+ # geom_smooth(aes(col = "Unfiltered"),  span = 0.1, method = "loess")+
+  facet_wrap(~CHROM,
+             scales = "free_x")+
+  scale_fill_manual("Predicted tetrasomic",
+                     values = c("black","#D55E00"))+
+#  scale_color_manual("Source",
+#                    values = c( "#56B4E9","#009E73"))+
+#  scale_y_continuous(limits = c(0,1))+
+  theme_bw()
+
+
+```
+
+
+## Ohnolog mapping
+
+Plot the proportion of reads that were removed that had just a single alternate alignment that corresponded with the correct Ohnolog:
+
+
+```{r, fig.height = 10, fig.width=14} 
+ohnoPlot <- ggplot()+
+   geom_rect(data = tetrasome_chunks,
+            aes(xmin = Start/1e6, xmax = End/1e6),
+            ymax =30, 
+            ymin = 0, 
+            fill = "black", 
+            col = "black",
+            alpha = 0.15)+
+  geom_point(data = trout,
+       aes(x = START/1e6,
+           y = (single_ohno_maps_removed)/(total_mappings), 
+           fill  = tetrasome), 
+             alpha = 0.5, pch = 21, size= 1.2)+
+   geom_smooth(data = trout,
+         aes(x = START/1e6,
+           y = (single_ohno_maps_removed)/(total_mappings)),
+          col = "red",
+          span = 0.1, 
+          method = "loess",
+          se = FALSE)+
+  ylab("Proportion")+
+  ggtitle("Proportion of mappings were removed that had a single Ohnolog mapping")+
+  xlab("Position in genome (Mbp)")+
+#  scale_y_continuous(limits = c(0,30))+
+ # geom_smooth(aes(col = "Unfiltered"),  span = 0.1, method = "loess")+
+  facet_wrap(~CHROM,
+             scales = "free_x")+
+  scale_fill_manual("Predicted tetrasomic",
+                     values = c("black","#D55E00"))+
+#  scale_color_manual("Source",
+#                    values = c( "#56B4E9","#009E73"))+
+#  scale_y_continuous(limits = c(0,1))+
+  theme_bw()
+print(ohnoPlot)
+  
+```
+
+
+Plot the proportion of reads that were removed that had multiple alternate alignments that corresponded with the correct Ohnolog:
+
+```{r, fig.height = 10, fig.width=14}
+
+ggplot()+
+   geom_rect(data = tetrasome_chunks,
+            aes(xmin = Start/1e6, xmax = End/1e6),
+            ymax =30, 
+            ymin = 0, 
+            fill = "black", 
+            col = "black",
+            alpha = 0.15)+
+  geom_point(data = trout,
+       aes(x = START/1e6,
+           y = (ohno_maps_removed)/(total_mappings),
+       fill  = tetrasome), 
+             alpha = 0.5, pch = 21, size= 1.2)+
+  ylab("Proportion")+
+  ggtitle("Proportion of mappings were removed that had any Ohnolog mappings")+
+  xlab("Position in genome (Mbp)")+
+#  scale_y_continuous(limits = c(0,30))+
+ # geom_smooth(aes(col = "Unfiltered"),  span = 0.1, method = "loess")+
+  facet_wrap(~CHROM,
+             scales = "free_x")+
+  scale_fill_manual("Predicted tetrasomic",
+                     values = c("black","#D55E00"))+
+#  scale_color_manual("Source",
+#                    values = c( "#56B4E9","#009E73"))+
+#  scale_y_continuous(limits = c(0,1))+
+  theme_bw()
+
+```
+
+You can see that the multi-Ohnolog hits give a pretty similar picture to the single Ohnolog hits. If it’s mostly single hits that have an effect, regions that are affected by the Ohnolog mapping issue should habe a pattern of one:one correspondence between the single Ohnolog mappings and multi-Ohnolog mappings:
+
+```{r, fig.height = 10, fig.width=14}
+ggplot(data = trout,
+       aes(x = single_ohno_maps_removed,
+           y = (ohno_maps_removed)))+
+  geom_point(aes(fill  = tetrasome), 
+             alpha = 0.5, pch = 21, size= 1.2)+
+  ylab("Single Ohnolog alignment")+
+  xlab("Multiple Ohnolog alignments")+
+  geom_abline(slope = 1, intercept = 0)+
+#  scale_y_continuous(limits = c(0,30))+
+ # geom_smooth(aes(col = "Unfiltered"),  span = 0.1, method = "loess")+
+  facet_wrap(~CHROM,
+             scales = "free_x")+
+  scale_fill_manual("Predicted tetrasomic",
+                     values = c("black","#D55E00"))+
+#  scale_color_manual("Source",
+#                    values = c( "#56B4E9","#009E73"))+
+#  scale_y_continuous(limits = c(0,1))+
+  theme_bw()
+  
+```
+  
+  
+So, regions that are substantially affected seem to be driven by single Ohnolog mappings.
+Empirical data
+
+So that was all done using simulated data. Do empirical data show the same patterns?
+
+Yes.
+
+```{r}
+
+## All simulated reads that have been mapped to the genome - before filtering
+trout_emp <- read.csv("~/work/Trout/BAMs/Atha-Buffalo_Prairie.s.OhnologSummary.csv")
+
+## I call the data after applying Jared's filters - Jared's data
+jared_emp <- read.csv("~/work/Trout/BAMs/Atha-Buffalo_Prairie.s.JaredClean.OhnologSummary.csv")
+
+# A list of the tetrasomic chromosomes 
+tetrasomic_chroms <- c("OmyA_01","OmyA_02","OmyA_03","OmyA_06","OmyA_07","OmyA_10","OmyA_12","OmyA_13","OmyA_15","OmyA_17","OmyA_18","OmyA_19","OmyA_21","OmyA_23","OmyA_26")
+
+## Make a dummy variable for each dataframe that labels the tetrasomic chroms
+jared_emp$tetrasome <- jared_emp$CHROM%in%tetrasomic_chroms
+trout_emp$tetrasome <- trout_emp$CHROM%in%tetrasomic_chroms
+
+
+# Calculate the proportion of data removed by applying Jared's filters...
+jared_emp$data_removed <- 1- jared_emp$total_mappings/trout_emp$total_mappings
+
+# The calculation is: 1 - (Number of reads mapping - after filtering)/(Total number of reads mapping before filtering)
+
+
+trout_emp$single_ohno_maps_removed <- trout_emp$single_ohno_maps - jared_emp$single_ohno_maps 
+
+trout_emp$ohno_maps_removed <- (trout_emp$single_ohno_maps + trout_emp$double_ohno_maps + trout_emp$multi_ohno_maps) - (jared_emp$single_ohno_maps + jared_emp$double_ohno_maps + jared_emp$multi_ohno_maps) 
+```
+  
+  
+  
+  What is the effect of Jared’s filtering on coverage?
+  
+  
+```{r, fig.height = 10, fig.width=14}
+
+
+ggplot()+
+  geom_rect(data = tetrasome_chunks,
+            aes(xmin = Start/1e6, xmax = End/1e6),
+            ymax =30, 
+            ymin = 0, 
+            fill = "black", 
+            col = "black",
+            alpha = 0.15)+
+  geom_point(data = jared_emp,
+       aes(x = START/1e6,
+           y = (total_mappings*70)/(END-START),
+           fill = tetrasome),
+          alpha = 0.5, 
+          pch = 21, 
+          size= 1.2)+
+  ylab("Coverage")+
+  xlab("Position in genome (Mbp)")+
+  scale_y_continuous(limits = c(0,30))+
+   geom_smooth(data = jared_emp, aes(x = START/1e6,
+            y = (total_mappings*70)/(END-START),
+            col = "Filtered"), span = 0.01, method = "loess", se = FALSE)+
+   geom_smooth(data = trout_emp, 
+               aes(x = START/1e6,
+                   y = (total_mappings*70)/(END-START),
+                   col = "Unfiltered"),  span = 0.1, method = "loess")+
+  facet_wrap(~CHROM,
+             scales = "free_x")+
+  scale_fill_manual("Predicted tetrasomic",
+                     values = c("black","#D55E00"))+
+  scale_color_manual("Source",
+                    values = c( "#56B4E9","#009E73"))+
+#  scale_y_continuous(limits = c(0,1))+
+  theme_bw()
+
+
+```
+
+
+
+Plot the proportion of reads that were removed that had just a single alternate alignment that corresponded with the correct Ohnolog:
+
+
+
+```{r, fig.height = 10, fig.width=14}
+
+ggplot()+
+   geom_rect(data = tetrasome_chunks,
+            aes(xmin = Start/1e6, xmax = End/1e6),
+            ymax =30, 
+            ymin = 0, 
+            fill = "black", 
+            col = "black",
+            alpha = 0.15)+
+  geom_point(data = trout_emp,
+       aes(x = START/1e6,
+           y = (single_ohno_maps_removed)/(total_mappings), 
+           fill  = tetrasome), 
+             alpha = 0.5, pch = 21, size= 1.2)+
+  ylab("Proportion")+
+  ggtitle("Proportion of mappings were removed that had a single Ohnolog mapping")+
+  xlab("Position in genome (Mbp)")+
+#  scale_y_continuous(limits = c(0,30))+
+ # geom_smooth(aes(col = "Unfiltered"),  span = 0.1, method = "loess")+
+  facet_wrap(~CHROM,
+             scales = "free_x")+
+  scale_fill_manual("Predicted tetrasomic",
+                     values = c("black","#D55E00"))+
+#  scale_color_manual("Source",
+#                    values = c( "#56B4E9","#009E73"))+
+#  scale_y_continuous(limits = c(0,1))+
+  theme_bw()
+  
+```
+
+
+# Identify bioinformatic bounds of the tetrasomic regions
+
+We have shown that some regions are prone to the tetrasomy-induced loss of coverage. So there are clearly regions where the sequence identity between two orthologs is so high that it nukes coverage and will make it hard to infer much of anything. 
+
+So, let's identify those regions and we can use a slightly different analysis for those regions:
+
+
+
+
+```{r}
+# Calculate the coverage stat we used to identify the tetrasomic regions and add it to the dataframe
+trout$coverage <- (trout$single_ohno_maps_removed)/(trout$total_mappings)
+
+# Make a list of all the chromosomes that are seemingly affected by the tetrasomic issue (based on the previous figure)
+list_of_affected_chroms <- c("OmyA_06",
+                             "OmyA_10",
+                             "OmyA_12",
+                             "OmyA_13",
+                             "OmyA_15",
+                             "OmyA_17",
+                             "OmyA_19",
+                             "OmyA_21",
+                             "OmyA_26")
+# Make a a list of the locations of the tetrasomic regions
+list_of_directions <- c("downstream",
+                        "downstream",
+                        "downstream",
+                        "both",
+                        "downstream",
+                        "upstream",
+                        "upstream",
+                        "upstream",
+                        "downstream")
+threshold = 0.05
+# Initialise a container
+results = list()
+# Loop over each affeted chromosome
+for ( i in 1:length(list_of_affected_chroms)){
+# grab the chromosomes name
+  chrom = list_of_affected_chroms[i]
+# grab the relevant slice of data
+  tmp_trout = trout[ trout$CHROM == chrom,]
+# fit a LOESS curve to the coverage data 
+  loessMod <- loess(coverage~START, data = tmp_trout, span = 0.20)
+  
+# predict the coverage from the loess fit
+  smoothed <- predict(loessMod)
+# store the results in a df  
+  tmp_df <- data.frame(smoothy = smoothed, 
+                       PoS = tmp_trout$START)
+# grab the direction of the tetrasomic behaviour
+  direction = list_of_directions[i]
+# If the tetrasomic activity is on the downstream side of the chrom, do this
+  if (direction == "downstream"){
+  tmp_tetra <- tmp_df[tmp_df$smoothy>threshold,]
+  
+  if  (max( tmp_tetra$PoS ) < max(tmp_df$PoS)){
+    endPoint <- max(tmp_df$PoS)
+  }
+  else{
+        endPoint <- max(tmp_tetra$PoS)
+  }
+  tmp_result = data.frame(start = min( tmp_tetra$PoS ),
+                          end = endPoint,
+                          CHROM = chrom)
+  }
+# If the tetrasomic activity is on the upstream side of the chrom, do this
+  else if (direction == "upstream"){
+  tmp_tetra <- tmp_df[tmp_df$smoothy>threshold,]
+  
+  
+  if  (min( tmp_tetra$PoS ) > min(tmp_df$PoS)){
+    startPoint <- min(tmp_df$PoS)
+  }
+  else{
+        startPoint <- min(tmp_tetra$PoS)
+  }
+  
+  tmp_result = data.frame(start = startPoint,
+                          end = max( tmp_tetra$PoS ),
+                          CHROM = chrom)
+  }
+# If the tetrasomic activity is on both sides of the chrom, do this
+  else if (direction == "both"){
+  tmp_tetra <- tmp_df[tmp_df$smoothy>threshold,]
+  #downstream first
+  tmp_tetra_down= tmp_tetra[tmp_tetra$PoS/1e6  >30,] 
+
+  if  (max( tmp_tetra_down$PoS ) < max(tmp_df$PoS)){
+    endPoint_down <- max(tmp_df$PoS)
+  }
+  else{
+        endPoint_down <- max(tmp_tetra$PoS)
+  }
+  tmp_result_down = data.frame(start = min( tmp_tetra_down$PoS ),
+                          end = endPoint_down,
+                          CHROM = chrom)
+  
+  
+  tmp_tetra_up= tmp_tetra[tmp_tetra$PoS/1e6  <30,] 
+
+  
+  if  (min( tmp_tetra_up$PoS ) > min(tmp_df$PoS)){
+    startPoint_up <- min(tmp_df$PoS)
+  }
+  else{
+        startPoint_up <- min(tmp_tetra_up$PoS)
+  }
+  
+  
+  tmp_result_up = data.frame(start = startPoint_up,
+                          end = max( tmp_tetra_up$PoS ),
+                          CHROM = chrom)
+  tmp_result = rbind(tmp_result_down,tmp_result_up)
+  }
+results[[i]] <- tmp_result
+}
+
+# Save the inferred chunks to a dataframe
+inferred_tetrasomic_chunks <- do.call(rbind, results)
+write.csv(inferred_tetrasomic_chunks, "~/work/Trout/ohnologPositions/inferredTetrasomicChunks.csv", row.names = F)
+```
+
+
+Now that we have our inferred tetrasomic chunks, let's make a graph showing their locations
+
+```{r, fig.height = 10, fig.width=14}
+
+
+newOhnoPlot <- ggplot()+
+   geom_rect(data = inferred_tetrasomic_chunks,
+            aes(xmin = start/1e6, xmax = end/1e6),
+            ymax =30, 
+            ymin = 0, 
+            fill = "black", 
+            col = "black",
+            alpha = 0.15)+
+  geom_point(data = trout,
+       aes(x = START/1e6,
+           y = (single_ohno_maps_removed)/(total_mappings), 
+           fill  = tetrasome), 
+             alpha = 0.5, pch = 21, size= 1.2)+
+   geom_smooth(data = trout,
+         aes(x = START/1e6,
+           y = (single_ohno_maps_removed)/(total_mappings)),
+          col = "red",
+          span = 0.1, 
+          method = "loess",
+          se = FALSE)+
+  ylab("Proportion")+
+  ggtitle("Boxes show the locations of tetrasomic chunks to limit our analysis")+
+  xlab("Position in genome (Mbp)")+
+#  scale_y_continuous(limits = c(0,30))+
+ # geom_smooth(aes(col = "Unfiltered"),  span = 0.1, method = "loess")+
+  facet_wrap(~CHROM,
+             scales = "free_x")+
+  scale_fill_manual("Predicted tetrasomic",
+                     values = c("black","#D55E00"))+
+#  scale_color_manual("Source",
+#                    values = c( "#56B4E9","#009E73"))+
+#  scale_y_continuous(limits = c(0,1))+
+  theme_bw()
+print(newOhnoPlot)
+  
+
+```
